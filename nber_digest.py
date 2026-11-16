@@ -628,14 +628,33 @@ ICON_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><
             '<circle cx="32" cy="33" r="4" fill="#FFC766"/><circle cx="43" cy="18.5" r="4.4" fill="#FFE6B0"/></svg>')
 ICON_PNG32 = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAwFBMVEU2JxtGMyOpmIJALiCZiHNqWUcAAABXRzd3ZlQ+LSCrlXiKemb8xWX+5a9wVjaKc1Wuhk27klLOp2s4KRw1JhuGZThGMyMxIxjms13wu2LjyZk0JRY+LSBBMB9MOCdKNyV+YDaFblKii2zXpFQtHxUwIBg7Kx4+LSA+MCRBLx9AMCBLNyRLNyafkHupf0TcsnDTvZbt1KIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADa8Y1wAAAAQHRSTlP+/v/+//8A///9////////////S7X/EIP///8RhP9IsP////9JIHC5//8gcIH//////wAAAAAAAAAAAAAAAAAA4ZuxVAAAAZ1JREFUeNp9U9di2zAMBCFwiJS1bNmNk7QZbdJmdPz/z/VIyhadusaDROgOB4g8kjFm+/ZFfYiqovr5ZguQjPms1L94VRNiHQnncShkBm3/Xx/jml7P4DTXI56omM+6IN5LcIqOsaEFd8ws9533nl21UI7lwsFCv23b+/1q334kaGad+oPgV6vVb3tKsPwwzz9N0x6EP96eEIRtxK0OQ99FhYdfY0nQ7PKYXsZx7Hs/XDWNLggiePwQdlT3P4dx/NQ0nUhBiAIVZJD3fQ94UKRZHQmaW8yHklpNj49Nc+UBWLYFAbhiNB0awJNm7HTKZ4IDIVdAvVFYRvWCoNlW9UFhILSnU4WWNc4vjn17d3dLlH5ALzOgvUtfXP4xl2od1zMB5y8+Ng0c8FJ4IaklzPsQ/aO5i0scuAizq5PAfBjZfyGnSnedTvtjeRag7D/lpbARcnn/flhn/1n2esG1Z7vgOaxPI6bywEc3wJUH/+Izw7AwLnOnFtPeFI0dMLBKV+/ohS7GNzLrS/g6Xt4LjK/pdpvtbnMO3eyujTF/AZu0ET5RRmLAAAAAAElFTkSuQmCC"
 ICON_PNG180 = "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"
+ICON_PNG16 = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAwFBMVEU2JxtHNCRpWEd4Z1VXRjdBLyCLeWY0JRk0Jhqth08/LiCGclrsuWIAAAA7Kx5LNyZKNiWTgm/XqFkqFRVAKhVALx9eT0GDYjaKbUqhfEKpjmi7lF68nWi/qIPGm1vWuoftt13jypr/5rAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8HvggAAAAQHRSTlP+/v//////h9b//f//AXVt1f//DAz//////////////////wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAa2mAJAAAAJFJREFUeNpVjgcOwzAMA6nhldmke4//P7Ky3TYoIUDmUYaEflxRlXNNHHqMtHgAA2quzLpFUbFe+NBe+QvU2/w+vZ70AZ6I23O6X7oKmB0LpducmAsQdR7Hx3wCSQVW6DqUbsCJos27BJq/OGeNJpGJwJpBA7FA7b2rh5iY7QLin7dcvJc8j4iAPwVsQlxsDOs3qcEERAJqURkAAAAASUVORK5CYII="
+ICON_PNG48 = "iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAMAAABg3Am1AAAAwFBMVEXt0p03JxtFMyOpmIJALiAAAAD+xmVVRDSXhnE+LSBoWEb+5a+JeGVwVTWolXp3Z1SvhkuIZjiTdk7Np283Jxw1JhrotFykfUOii2u7klI1JhpIMyTuvGcwJBRiTTY4KRxMNiZLNiUzJRk9LSA+LSBDKhhBMB9KNiWFb1S6oXrGlk7So1TRu5PZwZXs1KItHxUsHxYvIBY+MCRALiBALSBALiBMOSZKNiZKNSVeT0CAXzW/qIDHn2TBr43ZsnHpzZlU377LAAAAQHRSTlP//v7//wD//////////////////06T/////8UQ/xf/LkqjtGzMD//M/////////0n/aP84mKA2cZD/////////yZBr3gAAArVJREFUeNqVVteW4jAMdQHsGMcp9GGAnbKz03a29/b/f7WS7Jg4lAN6gBPlXuuqRAnrk339dvVG7LWe6IHdfrnZeCTDn+WVOGgI7/GMcz5ZNoRXR+Ai4sHGnnAE7wNkAU8M1l+eej7aayCcpL+xSZ8tzzgfQ7B9GShjisIYlegPWbDvXfS6djKYu1cdPJ+wTr9yTVCt5849OCe1SgkXLMUj3BrUn4Pdz389PzuRMBKCmsPZymeMhLwcgr2oQwQF4k1THyK8IGH4Rx0gAH4d619V1c+c8MO3bVUs0a+29a/QAkHqbA+hCHoogDJlDYR/RJg//F3sIUhZhPOVhVqNRiNXlwzwo3IwGKx3CFbqMBCWGjFCW9RgU8Bf1jsEL6gnBJTWKsFnZfkbKPUTwKe1lKJDMOCiAHC+wRTLspyVo0uAD2Z33EnTIVhpSX8e8EgoF4hf4Nlwu0NwqAjKo6Umv3osH0n8nC5NcG8J0AOqv5M5eNeI9eIdweD+DoECCJ/dk8fP7sI1FzHrQFDgwP7m/kTKdYAj5KQfpAMEDv898JKiqQcSIesSBBF4JjxgRoIw96Ad/Nlu0vj8almgu1osKvwvmqKlSUN9NHQmo/rJ1vQDzoSyJn0A9UUY4Uy3Z7npCjSu1Wmqv2qyUjI++Eo34UQ6S7TggniU7feAwamNPh2ntdlveTxE6WYvNaFEKzEW9yfoDYys8PgiJJPpbQBPoPqAeBvdAp7ueGFlawuw7f40bUbL6qTSrLWfQYkWXXhmY+qB0NrnyDAp/odO8ZzdtvezwdKYGEUYLJhJl/Hn5MCwMupCKWOpvFZ01v1NRzMtpWi2s+35B/ZppyrQY62d09qajzs3N6x/wc+wa3iLbs4hrPDFPj4Z/n7sPx1OZryLHyfXp8Anq/g10++vxpOjyV9MxiuP/A8iOiryPa50hQAAAABJRU5ErkJggg=="
+ICON_VERSION = "2"   # 아이콘을 바꾸면 숫자를 올려야 브라우저가 새로 받음
+
+
+def make_ico(pngs):
+    """PNG 여러 장을 하나의 .ico로 묶는다 (PNG-in-ICO, 모든 현행 브라우저 지원)."""
+    import struct
+    head = struct.pack("<HHH", 0, 1, len(pngs))
+    offset = 6 + 16 * len(pngs)
+    entries, blobs = b"", b""
+    for size, data in pngs:
+        entries += struct.pack("<BBBBHHII", size % 256, size % 256, 0, 0, 1, 32, len(data), offset)
+        blobs += data
+        offset += len(data)
+    return head + entries + blobs
+
 
 SITE_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="ko"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>NBER Literature Radar</title>
-<link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
-<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="favicon.ico?v=__IV__" sizes="any">
+<link rel="icon" href="favicon.svg?v=__IV__" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png?v=__IV__" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=__IV__">
+<link rel="manifest" href="site.webmanifest?v=__IV__">
 <meta name="theme-color" content="#F4ECDF" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1B1713" media="(prefers-color-scheme: dark)">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
@@ -1029,13 +1048,23 @@ def build_site(store):
                           .replace('id="s"', 'id="hs"').replace("url(#s)", "url(#hs)")
     page = (SITE_TEMPLATE.replace("__DATA__", blob)
                          .replace("__ICON__", icon_inline)
-                         .replace("__MINCITED__", str(SETTINGS["min_cited"])))
+                         .replace("__MINCITED__", str(SETTINGS["min_cited"]))
+                         .replace("__IV__", ICON_VERSION))
     out = Path(SETTINGS["site_dir"])
     out.mkdir(parents=True, exist_ok=True)
     (out / "index.html").write_text(page, encoding="utf-8")
     (out / "favicon.svg").write_text(ICON_SVG, encoding="utf-8")
     (out / "favicon-32.png").write_bytes(base64.b64decode(ICON_PNG32))
     (out / "apple-touch-icon.png").write_bytes(base64.b64decode(ICON_PNG180))
+    (out / "favicon.ico").write_bytes(make_ico([(16, base64.b64decode(ICON_PNG16)),
+                                                (32, base64.b64decode(ICON_PNG32)),
+                                                (48, base64.b64decode(ICON_PNG48))]))
+    (out / "site.webmanifest").write_text(json.dumps({
+        "name": "NBER Literature Radar", "short_name": "NBER Radar", "start_url": "./", "display": "browser",
+        "background_color": "#F4ECDF", "theme_color": "#F4ECDF",
+        "icons": [{"src": f"apple-touch-icon.png?v={ICON_VERSION}", "sizes": "180x180", "type": "image/png"},
+                  {"src": f"favicon.svg?v={ICON_VERSION}", "sizes": "any", "type": "image/svg+xml"}]},
+        ensure_ascii=False), encoding="utf-8")
     return out / "index.html"
 
 
