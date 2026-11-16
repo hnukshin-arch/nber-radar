@@ -4,6 +4,8 @@ on:
   schedule:
     - cron: "0 22 * * *"      # 매일 22:00 UTC = 한국시간 07:00
   workflow_dispatch:
+  push:
+    paths: ["config.json"]     # 설정 탭에서 저장하면 바로 다시 수집
 
 permissions:
   contents: write
@@ -34,8 +36,9 @@ jobs:
         run: |
           git config user.name  "nber-radar-bot"
           git config user.email "nber-radar-bot@users.noreply.github.com"
-          git add data/
+          git add data/ config.json
           git diff --cached --quiet || git commit -m "data: $(date -u +%F)"
+          git pull --rebase --autostash
           git push
       - uses: actions/upload-pages-artifact@v4
         with:
