@@ -8,7 +8,8 @@ NBER 신규 working paper를 관심분야로 걸러 웹사이트(GitHub Pages)�
 저장소 구조:
     nber_digest.py                       ← 이 파일 (수집·분류·사이트 생성·메일 전부)
     .github/workflows/nber_digest.yml    ← 매일 실행 + 웹사이트 배포
-    data/seen.json, data/papers.json     ← 자동 생성 (검사 기록, 누적 논문)
+    config.json                          ← 관심분야 설정 (웹사이트 설정 탭에서 편집, 없으면 자동 생성)
+    data/papers.json                     ← 자동 생성 (누적 논문)
     site/index.html                      ← 자동 생성 (배포되는 웹페이지, 저장소엔 안 올라감)
 
 설치 요약 (GitHub Free는 저장소가 Public이어야 Pages 사용 가능):
@@ -22,10 +23,11 @@ NBER 신규 working paper를 관심분야로 걸러 웹사이트(GitHub Pages)�
     python nber_digest.py            # 수집 → site/ 생성 → (비밀값 있으면) 메일 → data/ 갱신
     python nber_digest.py --preview  # site/ + preview.html(메일) 생성, data/는 갱신 안 함
 
-관심분야 추가/수정: 아래 [1] CONFIG의 FIELDS만 고치면 됨. 외부 패키지 없음.
+관심분야 추가/수정: 웹사이트 [설정] 탭 (또는 config.json 직접 편집). 외부 패키지 없음.
 """
 
 import argparse
+import base64
 import html
 import json
 import os
@@ -43,81 +45,57 @@ from pathlib import Path
 
 
 # ════════════════════════════════════════════════════════════════════
-# [1] CONFIG — 관심분야는 여기만 고치면 됨
+# [1] CONFIG — 관심분야 기본값 (실제 설정은 config.json, 웹사이트 설정 탭에서 편집)
 # ════════════════════════════════════════════════════════════════════
-# 각 키워드는 정규식(대소문자 무시). 제목 매칭은 3점, abstract 매칭은 1점.
-# 논문은 점수가 가장 높은 분야에 배치되고, 나머지 매칭 분야는 태그로 표시된다.
+# config.json이 없을 때만 아래 기본값으로 새로 만든다. 그 뒤로는 config.json이 기준.
+#
+# 키워드 문법 (대소문자 무시):
+#   mortgage            → mortgage, mortgages (끝에 s/es 자동 허용)
+#   debt-to-income      → 띄어쓰기·하이픈 구분 없이 매칭 (debt to income도 OK)
+#   refinanc*           → refinance, refinancing, refinanced ... (* = 뒤에 아무 글자)
+#   re:\bMPCs?\b        → re: 로 시작하면 정규식 그대로
+# 점수: 제목에서 매칭 3점, abstract에서 매칭 1점. 가장 높은 분야에 배치.
 
-FIELDS = {
-    "Household Debt": {
-        "color": "#2F6FEB",
-        "keywords": [
-            r"household debt", r"household leverage", r"household borrowing",
-            r"household balance sheets?", r"household credit", r"consumer credit",
-            r"consumer debt", r"mortgages?", r"refinanc\w*", r"foreclosures?",
-            r"credit cards?", r"student (loan|debt)s?", r"auto loans?",
-            r"deleveraging", r"debt[- ]to[- ]income", r"buy now,? pay later",
-            r"payday", r"personal bankruptcy", r"delinquen\w*",
-        ],
-    },
-    "Housing Market": {
-        "color": "#1A9E6F",
-        "keywords": [
-            r"housing", r"house prices?", r"home prices?", r"real estate",
-            r"homeownership", r"home ?owners?", r"rents?", r"rental",
-            r"renters?", r"landlords?", r"tenants?", r"residential",
-            r"zoning", r"land use", r"property (tax|values?)",
-        ],
-    },
-    "Corporate / Commercial Debt": {
-        "color": "#C2581B",
-        "keywords": [
-            r"corporate debt", r"corporate bonds?", r"corporate credit",
-            r"corporate leverage", r"firm leverage", r"firms?'? debt",
-            r"bank loans?", r"leveraged loans?", r"private credit",
-            r"commercial real estate", r"commercial (lending|loans?|mortgages?)",
-            r"credit spreads?", r"debt overhang", r"corporate default",
-            r"bankruptc\w*", r"covenants?", r"collateral constraints?",
-            r"financial frictions?", r"credit supply", r"supply of credit", r"credit crunch\w*",
-            r"creditors?", r"loss[- ]given[- ]default", r"debt financ\w*",
-            r"(green|sustainable) (bonds?|debt|loans?)", r"bond issuances?",
-            r"non[- ]recourse", r"syndicated loans?",
-        ],
-    },
-    "External Debt": {
-        "color": "#8A3FD1",
-        "keywords": [
-            r"external debt", r"sovereign debt", r"sovereign default",
-            r"sovereign spreads?", r"capital flows?", r"sudden stops?",
-            r"foreign currency debt", r"dollar debt", r"original sin",
-            r"currency mismatch", r"current account", r"net foreign assets",
-            r"international (borrowing|lending|liquidity)", r"debt crisis",
-            r"emerging[- ]markets?", r"balance of payments", r"capital controls?",
-            r"\bIMF\b", r"global financial cycle",
-        ],
-    },
-    "Heterogeneous Agent Models": {
-        "color": "#C8364F",
-        "keywords": [
-            r"heterogeneous[- ]agents?", r"\bHANK\b", r"incomplete markets?",
-            r"Aiyagari", r"Bewley", r"Krusell[- ]Smith", r"idiosyncratic (income )?risk",
-            r"heterogeneous (households|firms)", r"distributional macro\w*",
-            r"sequence[- ]space", r"marginal propensit(y|ies) to consume", r"\bMPCs?\b",
-            r"wealth distribution", r"hand[- ]to[- ]mouth",
-            r"precautionary sav\w*", r"borrowing constraints?",
-        ],
-    },
-}
+DEFAULT_FIELDS = [
+    {"name": "Household Debt", "color": "#2F6690", "keywords": [
+        "household debt", "household leverage", "household borrowing", "household balance sheet",
+        "household credit", "consumer credit", "consumer debt", "mortgage", "refinanc*", "foreclosure",
+        "credit card", "student loan", "student debt", "auto loan", "deleveraging", "debt-to-income",
+        "buy now pay later", "payday", "personal bankruptcy", "delinquen*"]},
+    {"name": "Housing Market", "color": "#4F7A3A", "keywords": [
+        "housing", "house price", "home price", "real estate", "homeownership", "homeowner",
+        "home owner", "rent", "rental", "renter", "landlord", "tenant", "residential", "zoning",
+        "land use", "property tax", "property value"]},
+    {"name": "Corporate / Commercial Debt", "color": "#B5562B", "keywords": [
+        "corporate debt", "corporate bond", "corporate credit", "corporate leverage", "firm leverage",
+        "firm debt", "bank loan", "leveraged loan", "private credit", "commercial real estate",
+        "commercial lending", "commercial loan", "commercial mortgage", "credit spread", "debt overhang",
+        "corporate default", "bankruptc*", "covenant", "collateral constraint", "financial friction",
+        "credit supply", "supply of credit", "credit crunch*", "creditor", "loss-given-default",
+        "debt financ*", "green bond", "sustainable bond", "sustainable debt", "sustainable loan",
+        "bond issuance", "non-recourse", "syndicated loan"]},
+    {"name": "External Debt", "color": "#7A4E9C", "keywords": [
+        "external debt", "sovereign debt", "sovereign default", "sovereign spread", "capital flow",
+        "sudden stop", "foreign currency debt", "dollar debt", "original sin", "currency mismatch",
+        "current account", "net foreign asset", "international borrowing", "international lending",
+        "international liquidity", "debt crisis", "debt crises", "emerging market", "balance of payments",
+        "capital control", "IMF", "global financial cycle"]},
+    {"name": "Heterogeneous Agent Models", "color": "#A8324A", "keywords": [
+        "heterogeneous agent", "HANK", "incomplete market", "Aiyagari", "Bewley", "Krusell-Smith",
+        "idiosyncratic risk", "idiosyncratic income risk", "heterogeneous household", "heterogeneous firm",
+        "distributional macro*", "sequence-space", "marginal propensity to consume",
+        "marginal propensities to consume", "MPC", "wealth distribution", "hand-to-mouth",
+        "precautionary sav*", "borrowing constraint"]},
+]
 
 SETTINGS = {
     "rss_url": "https://back.nber.org/rss/new.xml",
-    "min_score": 1,                 # 이 점수 이상이면 메일에 포함
+    "config_file": "config.json",   # 관심분야 설정 (웹사이트 설정 탭이 이 파일을 고침)
     "max_references": 5,            # 논문당 related literature 표시 개수
     "min_cited": 30,                # related literature 최소 피인용 수 (잡음 제거)
     "send_when_empty": False,       # 새 관심논문이 없는 날도 메일 보낼지
-    "data_dir": "data",             # seen.json(검사 기록) · papers.json(누적 논문) 저장 폴더
+    "data_dir": "data",             # papers.json(누적 논문) 저장 폴더
     "site_dir": "site",             # 웹사이트 출력 폴더 (GitHub Pages가 이 폴더를 배포)
-    "seen_keep_days": 120,          # 검사 기록 보관 기간
     "store_keep_days": 730,         # 웹사이트에 남겨둘 기간 (2년)
     "subject_prefix": "[NBER Digest]",
     "http_timeout": 25,
@@ -209,16 +187,83 @@ def fetch_nber_feed():
 # [4] CLASSIFY — 키워드 점수로 분야 배정
 # ════════════════════════════════════════════════════════════════════
 
-_COMPILED = {
-    name: [re.compile(rf"(?<![A-Za-z]){kw}(?![A-Za-z])", re.IGNORECASE) for kw in cfg["keywords"]]
-    for name, cfg in FIELDS.items()
-}
+# 실행 중 설정 (load_config가 채움)
+CONFIG = {}        # config.json 전체
+FIELDS = {}        # 활성 분야: name → {"color", "keywords", "patterns"}
+FIELD_COLORS = {}  # 활성 + 보관 분야 전체의 색
+
+
+def keyword_pattern(kw):
+    """키워드 문법 → 정규식. 위 [1] CONFIG 설명 참고."""
+    kw = kw.strip()
+    if kw.lower().startswith("re:"):
+        body = kw[3:]
+        try:
+            re.compile(body)
+            return body
+        except re.error:
+            return re.escape(body)
+    wild = kw.endswith("*")
+    tokens = [t for t in re.split(r"[\s\-]+", kw.rstrip("*")) if t]
+    if not tokens:
+        return None
+    body = r"[\s\-]+".join(re.escape(t) for t in tokens)
+    body += r"[A-Za-z]*" if wild else r"(?:s|es)?"
+    return rf"(?<![A-Za-z]){body}(?![A-Za-z])"
+
+
+def normalize_config(cfg):
+    out, names = [], set()
+    for f in cfg.get("fields", []):
+        name = str(f.get("name", "")).strip()
+        if not name or name in names:
+            continue
+        names.add(name)
+        kws = [str(k).strip() for k in f.get("keywords", []) if str(k).strip()]
+        color = f.get("color") if re.fullmatch(r"#[0-9A-Fa-f]{6}", str(f.get("color", ""))) else "#8C7B6B"
+        out.append({"name": name, "color": color, "keywords": kws, "active": bool(f.get("active", True))})
+    try:
+        min_score = max(1, int(cfg.get("min_score", 1)))
+    except (TypeError, ValueError):
+        min_score = 1
+    return {"version": 1, "min_score": min_score, "fields": out}
+
+
+def load_config():
+    """config.json을 읽어 FIELDS/FIELD_COLORS를 채운다. 없으면 기본값으로 만든다."""
+    global CONFIG, FIELDS, FIELD_COLORS
+    path = Path(SETTINGS["config_file"])
+    created = False
+    raw = None
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"config.json 형식 오류: {e}")
+    if raw is None:
+        raw = {"min_score": 1, "fields": [dict(f, active=True) for f in DEFAULT_FIELDS]}
+        created = True
+    CONFIG = normalize_config(raw)
+    FIELDS, FIELD_COLORS = {}, {}
+    for f in CONFIG["fields"]:
+        FIELD_COLORS[f["name"]] = f["color"]
+        if f["active"]:
+            pats = []
+            for kw in f["keywords"]:
+                p = keyword_pattern(kw)
+                if p:
+                    pats.append(re.compile(p, re.IGNORECASE))
+            FIELDS[f["name"]] = {"color": f["color"], "keywords": f["keywords"], "patterns": pats}
+    if created:
+        path.write_text(json.dumps(CONFIG, ensure_ascii=False, indent=2), encoding="utf-8")
+    return CONFIG
 
 
 def classify(paper):
     """분야별 점수와 매칭된 키워드를 붙인다."""
     scores, hits = {}, {}
-    for field, patterns in _COMPILED.items():
+    for field, spec in FIELDS.items():
+        patterns = spec["patterns"]
         s, h = 0, []
         for p in patterns:
             t = p.search(paper["title"])
@@ -442,7 +487,7 @@ def _ref_list(items, show_cite_as=False):
                 else f'<span style="color:#4b5563;">{E(r["authors"])} ({E(str(r["year"]))})</span> ')
         rows.append(
             f'<li style="margin:0 0 6px 0;">{lead}'
-            f'<a href="{E(r["url"])}" style="color:#111827;text-decoration:none;border-bottom:1px solid #d1d5db;">{E(r["title"])}</a>'
+            f'<a href="{E(r["url"])}" style="color:#2B241D;text-decoration:none;border-bottom:1px solid #d1d5db;">{E(r["title"])}</a>'
             f'{venue}{cited}</li>')
     return f'<ol style="margin:6px 0 10px 18px;padding:0;">{"".join(rows)}</ol>'
 
@@ -467,7 +512,7 @@ def _render_refs(p):
     links = (f'<div><a href="https://scholar.google.com/scholar?q={t}" style="color:#6b7280;font-size:12px;">Google Scholar에서 찾기</a>'
              f'<span style="color:#d1d5db;"> &nbsp;|&nbsp; </span>'
              f'<a href="https://www.semanticscholar.org/search?q={t}" style="color:#6b7280;font-size:12px;">Semantic Scholar</a></div>')
-    return (f'<div style="margin-top:14px;padding:12px 14px 10px 14px;background:#f7f8fa;border-radius:8px;'
+    return (f'<div style="margin-top:14px;padding:12px 14px 10px 14px;background:#F7EFE2;border-radius:8px;'
             f'font-size:12.5px;line-height:1.55;">{"".join(parts)}{links}</div>')
 
 def _render_paper(p):
@@ -477,14 +522,14 @@ def _render_paper(p):
     tags += "".join(_chip("+ " + f, FIELDS[f]["color"]) for f in others)
     return f"""
 <tr><td style="padding:0 0 18px 0;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;border-left:4px solid {color};">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FFFAF2;border:1px solid #E5D7C1;border-radius:10px;border-left:4px solid {color};">
   <tr><td style="padding:18px 20px;">
     <div style="font-size:11px;color:#8b93a1;letter-spacing:.04em;margin-bottom:6px;">
       NBER {E(p['id'].upper())} &nbsp;·&nbsp;
       <a href="{E(p['url'])}" style="color:#8b93a1;">page</a> &nbsp;·&nbsp;
       <a href="{E(p['pdf'])}" style="color:#8b93a1;">PDF</a>
     </div>
-    <a href="{E(p['url'])}" style="font-family:{SERIF};font-size:19px;line-height:1.35;color:#111827;text-decoration:none;font-weight:700;">{E(p['title'])}</a>
+    <a href="{E(p['url'])}" style="font-family:{SERIF};font-size:19px;line-height:1.35;color:#2B241D;text-decoration:none;font-weight:700;">{E(p['title'])}</a>
     <div style="margin:8px 0 10px 0;font-size:13.5px;color:#374151;">{E(p['authors'])}</div>
     <div>{tags}</div>
     <div style="margin-top:10px;font-size:14px;line-height:1.7;color:#1f2937;">{E(p['abstract'])}</div>
@@ -523,21 +568,21 @@ def render_email(papers, today):
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>NBER Digest {today}</title></head>
-<body style="margin:0;padding:0;background:#f3f4f6;font-family:{FONT};">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;">
+<body style="margin:0;padding:0;background:#F4ECDF;font-family:{FONT};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4ECDF;">
 <tr><td align="center" style="padding:28px 12px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:700px;">
 
 <tr><td style="padding:0 0 18px 0;">
   <div style="font-size:12px;color:#6b7280;letter-spacing:.08em;">{E(today)}</div>
-  <div style="font-family:{SERIF};font-size:28px;font-weight:700;color:#111827;margin-top:4px;">NBER Working Papers</div>
-  <div style="font-size:14px;color:#4b5563;margin-top:4px;">관심분야 신규 논문 <b>{len(papers)}</b>편{f' · <a href="{E(site_url())}" style="color:#2F6FEB;">웹에서 전체 보기 →</a>' if site_url() else ''}</div>
+  <div style="font-family:{SERIF};font-size:28px;font-weight:700;color:#2B241D;margin-top:4px;">NBER Working Papers</div>
+  <div style="font-size:14px;color:#4b5563;margin-top:4px;">관심분야 신규 논문 <b>{len(papers)}</b>편{f' · <a href="{E(site_url())}" style="color:#C8742E;">웹에서 전체 보기 →</a>' if site_url() else ''}</div>
   <div style="margin-top:12px;">{summary}</div>
 </td></tr>
 
 {''.join(sections)}
 
-<tr><td style="padding:18px 0 0 0;border-top:1px solid #e5e7eb;font-size:11.5px;color:#9ca3af;line-height:1.6;">
+<tr><td style="padding:18px 0 0 0;border-top:1px solid #E5D7C1;font-size:11.5px;color:#9ca3af;line-height:1.6;">
   Source: NBER new working papers RSS · Related literature: OpenAlex (경제·재무 분야, 피인용 {SETTINGS['min_cited']}회 이상)<br>
   PDF는 NBER 구독 기관 IP(교내망)나 NBER 로그인이 있어야 열립니다.<br>
   분야는 제목·abstract 키워드로 자동 분류됩니다. 키워드는 <code>nber_digest.py</code>의 FIELDS에서 수정하세요.
@@ -564,38 +609,65 @@ def send_email(subject, html_body):
 
 
 # ════════════════════════════════════════════════════════════════════
-# [8] SITE — GitHub Pages용 웹사이트 (site/index.html 한 파일)
+# [8] SITE — GitHub Pages용 웹사이트
 # ════════════════════════════════════════════════════════════════════
-# 누적된 논문 전체를 데이터로 박아 넣은 정적 페이지. 서버 없이 브라우저에서
-# 분야 필터·검색·날짜별 묶음이 동작한다.
+# site/index.html 한 파일 + 아이콘 파일. 누적 논문과 설정(config.json)을 페이지에 박아 넣고,
+# 브라우저에서 분야 필터·검색·설정 편집이 동작한다.
+# 설정 저장은 사용자가 이 브라우저에 연결한 GitHub 토큰으로 config.json을 직접 커밋한다
+# (커밋되면 워크플로가 자동 실행돼 새 분야로 이번 주 NBER 논문을 다시 훑는다).
+
+ICON_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+            '<stop offset="0" stop-color="#4E3927"/><stop offset="1" stop-color="#2A1E15"/></linearGradient>'
+            '<radialGradient id="s" cx="32" cy="33" r="23" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#F5B95E"/>'
+            '<stop offset="1" stop-color="#F5B95E" stop-opacity=".15"/></radialGradient></defs>'
+            '<rect width="64" height="64" rx="14" fill="url(#g)"/>'
+            '<circle cx="32" cy="33" r="21.5" fill="none" stroke="#F3E3C7" stroke-opacity=".6" stroke-width="3"/>'
+            '<circle cx="32" cy="33" r="11" fill="none" stroke="#F3E3C7" stroke-opacity=".6" stroke-width="3"/>'
+            '<path d="M32 33 L32 11.5 A21.5 21.5 0 0 1 50.6 22.2 Z" fill="url(#s)" fill-opacity=".85"/>'
+            '<line x1="32" y1="33" x2="50.6" y2="22.2" stroke="#FFC766" stroke-width="3.4" stroke-linecap="round"/>'
+            '<circle cx="32" cy="33" r="4" fill="#FFC766"/><circle cx="43" cy="18.5" r="4.4" fill="#FFE6B0"/></svg>')
+ICON_PNG32 = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAwFBMVEU2JxtGMyOpmIJALiCZiHNqWUcAAABXRzd3ZlQ+LSCrlXiKemb8xWX+5a9wVjaKc1Wuhk27klLOp2s4KRw1JhuGZThGMyMxIxjms13wu2LjyZk0JRY+LSBBMB9MOCdKNyV+YDaFblKii2zXpFQtHxUwIBg7Kx4+LSA+MCRBLx9AMCBLNyRLNyafkHupf0TcsnDTvZbt1KIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADa8Y1wAAAAQHRSTlP+/v/+//8A///9////////////S7X/EIP///8RhP9IsP////9JIHC5//8gcIH//////wAAAAAAAAAAAAAAAAAA4ZuxVAAAAZ1JREFUeNp9U9di2zAMBCFwiJS1bNmNk7QZbdJmdPz/z/VIyhadusaDROgOB4g8kjFm+/ZFfYiqovr5ZguQjPms1L94VRNiHQnncShkBm3/Xx/jml7P4DTXI56omM+6IN5LcIqOsaEFd8ws9533nl21UI7lwsFCv23b+/1q334kaGad+oPgV6vVb3tKsPwwzz9N0x6EP96eEIRtxK0OQ99FhYdfY0nQ7PKYXsZx7Hs/XDWNLggiePwQdlT3P4dx/NQ0nUhBiAIVZJD3fQ94UKRZHQmaW8yHklpNj49Nc+UBWLYFAbhiNB0awJNm7HTKZ4IDIVdAvVFYRvWCoNlW9UFhILSnU4WWNc4vjn17d3dLlH5ALzOgvUtfXP4xl2od1zMB5y8+Ng0c8FJ4IaklzPsQ/aO5i0scuAizq5PAfBjZfyGnSnedTvtjeRag7D/lpbARcnn/flhn/1n2esG1Z7vgOaxPI6bywEc3wJUH/+Izw7AwLnOnFtPeFI0dMLBKV+/ohS7GNzLrS/g6Xt4LjK/pdpvtbnMO3eyujTF/AZu0ET5RRmLAAAAAAElFTkSuQmCC"
+ICON_PNG180 = "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"
 
 SITE_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="ko"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>NBER Literature Radar</title>
-<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#F4ECDF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1B1713" media="(prefers-color-scheme: dark)">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
 <style>
-:root{--bg:#f4f5f7;--card:#fff;--ink:#14161a;--sub:#4b5260;--mute:#8a919e;--line:#e3e6eb;--soft:#f6f7f9}
-@media (prefers-color-scheme:dark){:root{--bg:#121417;--card:#1b1e23;--ink:#eceef1;--sub:#b3b9c4;--mute:#7d8592;--line:#2b2f36;--soft:#22262c}}
+:root{--bg:#F4ECDF;--card:#FFFAF2;--ink:#2B241D;--sub:#65584A;--mute:#9A8B79;--line:#E5D7C1;--soft:#F7EFE2;--accent:#C8742E;--ok:#4F7A3A;--err:#A8324A}
+@media (prefers-color-scheme:dark){:root{--bg:#1B1713;--card:#24201B;--ink:#EFE6D8;--sub:#C2B4A2;--mute:#8D7F6E;--line:#3A332B;--soft:#2C2721;--accent:#E3A05A;--ok:#8DB872;--err:#E07A8C}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:Pretendard,-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;-webkit-font-smoothing:antialiased}
 a{color:inherit}
-.wrap{max-width:820px;margin:0 auto;padding:40px 20px 80px}
-header .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:600}
-header h1{font-family:Georgia,'Times New Roman',serif;font-size:34px;margin:6px 0 6px;letter-spacing:-.01em}
-header p{margin:0;color:var(--sub);font-size:14px}
-.controls{position:sticky;top:0;z-index:5;background:var(--bg);padding:18px 0 12px;margin-top:18px;border-bottom:1px solid var(--line)}
-.search{width:100%;padding:11px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font-size:14px;outline:none}
-.search:focus{border-color:#7aa2f7}
+button,input,textarea{font-family:inherit;font-size:inherit;color:inherit}
+.wrap{max-width:820px;margin:0 auto;padding:36px 20px 80px}
+header{display:flex;align-items:center;gap:16px}
+header .logo{width:56px;height:56px;flex:none;filter:drop-shadow(0 4px 10px rgba(74,54,38,.18))}
+header .eyebrow{font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:600}
+header h1{font-family:Georgia,'Times New Roman',serif;font-size:31px;margin:2px 0 0;letter-spacing:-.01em}
+#sub{margin:14px 0 0;color:var(--sub);font-size:13.5px}
+nav{display:flex;gap:4px;margin-top:20px;border-bottom:1px solid var(--line)}
+nav a{padding:10px 14px;font-size:14px;color:var(--mute);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px;font-weight:600}
+nav a.on{color:var(--ink);border-color:var(--accent)}
+.controls{position:sticky;top:0;z-index:5;background:var(--bg);padding:16px 0 12px;border-bottom:1px solid var(--line)}
+.search{width:100%;padding:11px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card);font-size:14px;outline:none}
+.search:focus,.inp:focus,textarea:focus{border-color:var(--accent);outline:none}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
-.chip{border:1px solid var(--line);background:var(--card);color:var(--sub);font-size:12.5px;padding:6px 11px;border-radius:999px;cursor:pointer;user-select:none;font-family:inherit}
+.chip{border:1px solid var(--line);background:var(--card);color:var(--sub);font-size:12.5px;padding:6px 11px;border-radius:999px;cursor:pointer;user-select:none}
 .chip .n{opacity:.6;margin-left:4px}
 .chip.on{color:#fff;border-color:transparent}
-.day{margin:34px 0 12px;display:flex;align-items:baseline;gap:10px}
+.chip.arch{border-style:dashed;background:transparent}
+.chip.arch .tagx{font-size:10.5px;opacity:.7;margin-left:5px}
+.day{margin:32px 0 12px;display:flex;align-items:baseline;gap:10px}
 .day h2{font-size:15px;margin:0;font-weight:700}
 .day span{font-size:12.5px;color:var(--mute)}
-.card{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--c);border-radius:12px;padding:20px 22px;margin-bottom:14px}
+.card{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--c);border-radius:12px;padding:20px 22px;margin-bottom:14px;box-shadow:0 1px 0 rgba(120,90,50,.04)}
 .meta{font-size:11.5px;color:var(--mute);letter-spacing:.03em;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .meta a{color:var(--mute)}
 .field{color:var(--c);font-weight:700;text-transform:uppercase;letter-spacing:.08em}
@@ -603,9 +675,8 @@ header p{margin:0;color:var(--sub);font-size:14px}
 .title:hover{text-decoration:underline;text-decoration-thickness:1px}
 .authors{font-size:13.5px;color:var(--sub);margin-bottom:10px}
 .tag{display:inline-block;font-size:11px;padding:3px 8px;border-radius:999px;border:1px solid color-mix(in srgb,var(--tc) 40%,transparent);color:var(--tc);margin:0 4px 4px 0}
-.abs{font-size:14.5px;line-height:1.75;color:var(--ink);margin-top:8px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.abs{font-size:14.5px;line-height:1.75;margin-top:8px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
 .abs.open{display:block}
-.more{font-size:12px;color:var(--mute);cursor:pointer;margin-top:4px;background:none;border:0;padding:0;font-family:inherit}
 details.refs{margin-top:14px;background:var(--soft);border-radius:9px;padding:10px 14px;font-size:13px;line-height:1.55}
 details.refs summary{cursor:pointer;font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--sub);font-weight:700}
 .lab{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--mute);font-weight:700;margin-top:10px}
@@ -618,19 +689,55 @@ li a:hover{border-color:var(--mute)}
 .ext{margin-top:8px;font-size:12px}
 .ext a{color:var(--mute)}
 .empty{text-align:center;color:var(--mute);padding:60px 0}
+/* settings */
+.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin-top:22px}
+.panel h3{margin:0 0 4px;font-size:16px}
+.panel .desc{margin:0 0 14px;color:var(--sub);font-size:13px;line-height:1.6}
+.fe{border:1px solid var(--line);border-left:4px solid var(--c);border-radius:10px;padding:12px 14px;margin-bottom:10px;background:var(--bg)}
+.fe-top{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.fe-top input[type=color]{width:34px;height:34px;border:1px solid var(--line);border-radius:8px;padding:2px;background:var(--card);cursor:pointer}
+.inp{flex:1;min-width:180px;padding:8px 11px;border:1px solid var(--line);border-radius:8px;background:var(--card);font-size:14px;font-weight:600}
+.inp:disabled{opacity:.75}
+.cnt{font-size:12px;color:var(--mute);white-space:nowrap}
+textarea{width:100%;margin-top:8px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--card);font-size:13px;line-height:1.55;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.hint{font-size:12px;color:var(--mute);margin-top:6px;line-height:1.55}
+.btn{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:8px 13px;font-size:13px;cursor:pointer;color:var(--sub)}
+.btn:hover{border-color:var(--mute)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn.primary:disabled{opacity:.45;cursor:not-allowed}
+.btn.small{padding:6px 10px;font-size:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.arch-item{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-top:1px dashed var(--line);font-size:14px}
+.arch-item:first-child{border-top:0}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:1px}
+code{background:var(--soft);padding:1px 6px;border-radius:5px;font-size:12.5px}
+.syntax{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13px;color:var(--sub)}
+.msg{margin-top:12px;font-size:13px;line-height:1.6}
+.msg.ok{color:var(--ok)} .msg.err{color:var(--err)}
+.dirty{font-size:12.5px;color:var(--accent);font-weight:600}
+details.howto{margin-top:10px;font-size:13px;color:var(--sub);line-height:1.7}
+details.howto summary{cursor:pointer;font-weight:600}
+details.howto ol{margin-top:6px}
 footer{margin-top:50px;font-size:12px;color:var(--mute);line-height:1.7;border-top:1px solid var(--line);padding-top:16px}
 </style></head>
 <body><div class="wrap">
 <header>
-  <div class="eyebrow">NBER Working Papers · Literature Radar</div>
-  <h1>NBER Literature Radar</h1>
-  <p id="sub"></p>
+  <div class="logo">__ICON__</div>
+  <div><div class="eyebrow">NBER Working Papers</div><h1>NBER Literature Radar</h1></div>
 </header>
-<div class="controls">
-  <input class="search" id="q" type="search" placeholder="제목·저자·abstract·키워드 검색">
-  <div class="chips" id="chips"></div>
-</div>
-<main id="list"></main>
+<p id="sub"></p>
+<nav><a href="#papers" id="tab-papers">논문</a><a href="#settings" id="tab-settings">설정</a></nav>
+
+<section id="view-papers">
+  <div class="controls">
+    <input class="search" id="q" type="search" placeholder="제목·저자·abstract·키워드 검색">
+    <div class="chips" id="chips"></div>
+  </div>
+  <main id="list"></main>
+</section>
+
+<section id="view-settings" hidden></section>
+
 <footer>
   Source: NBER new working papers RSS · Related literature: OpenAlex (경제·재무 분야, 상위 저널 우선, 피인용 __MINCITED__회 이상)<br>
   분야는 제목·abstract 키워드로 자동 분류됩니다. Related literature는 검색 기반이라 실제 참고문헌과 다를 수 있습니다.<br>
@@ -640,21 +747,41 @@ footer{margin-top:50px;font-size:12px;color:var(--mute);line-height:1.7;border-t
 <script id="data" type="application/json">__DATA__</script>
 <script>
 const D = JSON.parse(document.getElementById('data').textContent);
-const FIELDS = D.fields, PAPERS = D.papers;
+const PAPERS = D.papers;
+const TOKEN_KEY = 'nber_radar_token';
+const PALETTE = ['#2F6690','#4F7A3A','#B5562B','#7A4E9C','#A8324A','#1F7A7A','#8A6A1F','#5C6B8A','#9C4F6B','#3E7C59'];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const LS = {get:k=>{try{return localStorage.getItem(k)}catch(e){return null}}, set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}, del:k=>{try{localStorage.removeItem(k)}catch(e){}}};
+const COUNTS = {}; PAPERS.forEach(p => COUNTS[p.field] = (COUNTS[p.field]||0) + 1);
+let saved = D.config;                                   // GitHub에 저장된 설정
+let draft = JSON.parse(JSON.stringify(D.config));       // 설정 탭에서 편집 중인 설정
 let active = 'ALL', query = '';
 
+const colorOf = n => (saved.fields.find(f => f.name === n) || {}).color || '#8C7B6B';
+const latestN = PAPERS.filter(p => p.added === D.latest).length;
 document.getElementById('sub').textContent =
-  `마지막 업데이트 ${D.updated} · 누적 ${PAPERS.length}편 · 최근 발행분 ${PAPERS.filter(p=>p.added===D.latest).length}편`;
+  `마지막 업데이트 ${D.updated} · 누적 ${PAPERS.length}편` + (D.latest ? ` · 최근 발행분(${D.latest}) ${latestN}편` : '');
 
-function chips(){
-  const cnt = {}; PAPERS.forEach(p => cnt[p.field] = (cnt[p.field]||0) + 1);
-  const all = [['ALL','전체',PAPERS.length,'var(--ink)'], ...Object.keys(FIELDS).map(f => [f,f,cnt[f]||0,FIELDS[f]])];
-  document.getElementById('chips').innerHTML = all.map(([k,l,n,c]) =>
-    `<button class="chip ${active===k?'on':''}" data-k="${esc(k)}" style="${active===k?`background:${c};color:${k==='ALL'?'var(--bg)':'#fff'}`:''}">${esc(l)}<span class="n">${n}</span></button>`).join('');
-  document.querySelectorAll('.chip').forEach(b => b.onclick = () => { active = b.dataset.k; render(); });
+/* ── 논문 탭 ─────────────────────────────────────────── */
+function fieldGroups(){
+  const act = saved.fields.filter(f => f.active).map(f => f.name);
+  const arch = [...new Set([...saved.fields.filter(f => !f.active).map(f => f.name), ...Object.keys(COUNTS)])]
+    .filter(n => !act.includes(n) && COUNTS[n]);
+  return {act, arch};
 }
-
+function chips(){
+  const {act, arch} = fieldGroups();
+  const mk = (k, label, n, c, isArch) => {
+    const on = active === k;
+    const st = on ? `background:${c};color:${k==='ALL'?'var(--bg)':'#fff'}` : (isArch ? `color:${c};border-color:${c}66` : '');
+    return `<button class="chip ${on?'on':''} ${isArch?'arch':''}" data-k="${esc(k)}" style="${st}" title="${isArch?'관심분야에서 뺀 분야 — 과거에 받은 논문만 남아 있음':''}">${esc(label)}<span class="n">${n}</span>${isArch?'<span class="tagx">보관</span>':''}</button>`;
+  };
+  document.getElementById('chips').innerHTML =
+    mk('ALL', '전체', PAPERS.length, 'var(--ink)', false) +
+    act.map(n => mk(n, n, COUNTS[n]||0, colorOf(n), false)).join('') +
+    arch.map(n => mk(n, n, COUNTS[n], colorOf(n), true)).join('');
+  document.querySelectorAll('.chip').forEach(b => b.onclick = () => { active = b.dataset.k; renderPapers(); });
+}
 function refList(items, citeAs){
   return '<ol>' + items.map(r => r.unresolved
     ? `<li><b>${esc(r.cite_as)}</b> → <a href="${esc(r.url)}" target="_blank" rel="noopener">Google Scholar에서 찾기</a></li>`
@@ -662,11 +789,10 @@ function refList(items, citeAs){
       + `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>`
       + `${r.venue ? ` · <i>${esc(r.venue)}</i>` : ''}${r.cited ? ` <span class="src">· cited ${Number(r.cited).toLocaleString()}</span>` : ''}</li>`).join('') + '</ol>';
 }
-
 function card(p, openRefs){
-  const c = FIELDS[p.field];
+  const c = colorOf(p.field);
   const tags = (p.hits[p.field]||[]).slice(0,6).map(t => `<span class="tag" style="--tc:${c}">${esc(t)}</span>`).join('')
-    + Object.keys(p.scores).filter(f => f!==p.field).map(f => `<span class="tag" style="--tc:${FIELDS[f]}">+ ${esc(f)}</span>`).join('');
+    + Object.keys(p.scores||{}).filter(f => f!==p.field).map(f => `<span class="tag" style="--tc:${colorOf(f)}">+ ${esc(f)}</span>`).join('');
   let refs = '';
   if (p.cited_refs?.length) refs += `<div class="lab">Cited in abstract</div>` + refList(p.cited_refs, true);
   if (p.related?.length) refs += `<div class="lab">${p.related_kind==='references' ? 'Key references <i>· 피인용 상위</i>' : 'Related literature <i>· 자동 검색, 관련도순</i>'}</div>` + refList(p.related, false);
@@ -684,44 +810,232 @@ function card(p, openRefs){
       <a href="https://www.semanticscholar.org/search?q=${encodeURIComponent(p.title)}" target="_blank" rel="noopener">Semantic Scholar</a></div></details>
   </article>`;
 }
-
-function render(){
+function renderPapers(){
   chips();
   const q = query.trim().toLowerCase();
   const list = PAPERS.filter(p => (active==='ALL' || p.field===active) &&
-    (!q || [p.title,p.authors,p.abstract,...Object.values(p.hits).flat()].join(' ').toLowerCase().includes(q)));
+    (!q || [p.title,p.authors,p.abstract,...Object.values(p.hits||{}).flat()].join(' ').toLowerCase().includes(q)));
   const days = {};
   list.forEach(p => (days[p.added] ||= []).push(p));
   const keys = Object.keys(days).sort().reverse();
-  document.getElementById('list').innerHTML = keys.length ? keys.map(d =>
+  const isArch = fieldGroups().arch.includes(active);
+  document.getElementById('list').innerHTML = (keys.length ? keys.map(d =>
     `<div class="day"><h2>${d}${d===D.latest?' · 최신':''}</h2><span>${days[d].length}편</span></div>` +
-    days[d].map(p => card(p, d===D.latest)).join('')).join('')
-    : '<div class="empty">조건에 맞는 논문이 없습니다.</div>';
+    days[d].map(p => card(p, d===D.latest && !isArch)).join('')).join('')
+    : `<div class="empty">${active!=='ALL' && !COUNTS[active] ? '아직 이 분야로 받은 논문이 없습니다. 다음 NBER 발행분부터 모입니다.' : '조건에 맞는 논문이 없습니다.'}</div>`);
   document.querySelectorAll('.abs').forEach(el => el.onclick = () => el.classList.toggle('open'));
 }
-document.getElementById('q').addEventListener('input', e => { query = e.target.value; render(); });
-render();
+document.getElementById('q').addEventListener('input', e => { query = e.target.value; renderPapers(); });
+
+/* ── 설정 탭 ─────────────────────────────────────────── */
+const cleanCfg = c => ({version: 1, min_score: Math.max(1, parseInt(c.min_score) || 1),
+  fields: c.fields.map(f => ({name: f.name.trim(), color: f.color, active: !!f.active,
+    keywords: [...new Set(f.keywords.map(k => k.trim()).filter(Boolean))]}))});
+const isDirty = () => JSON.stringify(cleanCfg(draft)) !== JSON.stringify(cleanCfg(saved));
+const lockedName = f => !!COUNTS[f._orig || f.name] && saved.fields.some(s => s.name === (f._orig || f.name));
+
+function validate(){
+  const names = draft.fields.map(f => f.name.trim());
+  if (names.some(n => !n)) return '이름이 빈 분야가 있습니다.';
+  const dup = names.find((n, i) => names.indexOf(n) !== i);
+  if (dup) return `분야 이름 "${dup}"이(가) 중복됩니다.`;
+  const empty = draft.fields.find(f => f.active && !f.keywords.some(k => k.trim()));
+  if (empty) return `"${empty.name}" 분야에 키워드가 하나도 없습니다.`;
+  return null;
+}
+function fieldEditor(f, i){
+  const n = COUNTS[f.name] || 0, locked = lockedName(f);
+  const action = n ? `<button class="btn small" data-act="archive" data-i="${i}" title="관심분야에서 빼고, 받은 논문은 첫 페이지에 '보관'으로 남김">관심분야에서 빼기</button>`
+                   : `<button class="btn small" data-act="delete" data-i="${i}">삭제</button>`;
+  return `<div class="fe" style="--c:${esc(f.color)}">
+    <div class="fe-top">
+      <input type="color" value="${esc(f.color)}" data-k="color" data-i="${i}" title="색">
+      <input class="inp" value="${esc(f.name)}" data-k="name" data-i="${i}" ${locked?'disabled title="논문이 쌓인 분야는 이름을 바꿀 수 없어요"':''} placeholder="분야 이름">
+      <span class="cnt">논문 ${n}편</span>${action}
+    </div>
+    <textarea rows="${Math.min(8, Math.max(3, Math.ceil(f.keywords.length/3)))}" data-k="keywords" data-i="${i}" placeholder="키워드를 한 줄에 하나씩 (예: mortgage)">${esc(f.keywords.join('\n'))}</textarea>
+    ${locked ? '<div class="hint">이미 논문이 쌓인 분야라 이름은 고정입니다. 이름을 바꾸고 싶으면 새 분야를 만들고 이 분야는 빼세요.</div>' : ''}
+  </div>`;
+}
+function renderSettings(){
+  const act = draft.fields.map((f, i) => [f, i]).filter(([f]) => f.active);
+  const arch = draft.fields.map((f, i) => [f, i]).filter(([f]) => !f.active);
+  const orphan = Object.keys(COUNTS).filter(n => !draft.fields.some(f => f.name === n));
+  const token = LS.get(TOKEN_KEY);
+  const repoOk = !!D.repo;
+  document.getElementById('view-settings').innerHTML = `
+  <div class="panel">
+    <h3>관심분야</h3>
+    <p class="desc">제목이나 abstract에 키워드가 나오면 그 분야로 모읍니다 (제목 3점, abstract 1점, 가장 높은 분야에 배치).<br>
+    저장하면 바로 수집이 다시 돌아서, 새로 넣은 분야로 <b>이번 주 NBER 발행분</b>도 훑습니다.</p>
+    ${act.map(([f, i]) => fieldEditor(f, i)).join('') || '<p class="desc">활성 분야가 없습니다.</p>'}
+    <button class="btn" id="add">+ 새 분야 추가</button>
+  </div>
+
+  <div class="panel">
+    <h3>보관된 분야</h3>
+    <p class="desc">관심분야에서 뺀 분야입니다. 더 이상 새 논문을 모으지 않지만, 받았던 논문은 첫 페이지에서 <b>보관</b> 표시로 계속 볼 수 있습니다.</p>
+    ${arch.length || orphan.length ? arch.map(([f, i]) => `<div class="arch-item"><span><span class="dot" style="background:${esc(f.color)}"></span>${esc(f.name)} <span class="cnt">· 논문 ${COUNTS[f.name]||0}편</span></span>
+        <span class="row"><button class="btn small" data-act="restore" data-i="${i}">다시 관심분야로</button>${COUNTS[f.name] ? '' : `<button class="btn small" data-act="delete" data-i="${i}">완전 삭제</button>`}</span></div>`).join('')
+      + orphan.map(n => `<div class="arch-item"><span><span class="dot" style="background:#8C7B6B"></span>${esc(n)} <span class="cnt">· 논문 ${COUNTS[n]}편 (설정 파일에 없음)</span></span></div>`).join('')
+      : '<p class="desc" style="margin:0">아직 없습니다.</p>'}
+  </div>
+
+  <div class="panel">
+    <h3>키워드 쓰는 법</h3>
+    <div class="syntax">
+      <code>mortgage</code><span>mortgage, mortgages 모두 (끝의 s/es 자동 허용, 대소문자 무시)</span>
+      <code>debt-to-income</code><span>띄어쓰기·하이픈 구분 없이 (debt to income도 매칭)</span>
+      <code>refinanc*</code><span>refinance, refinancing, refinanced … (<b>*</b> = 뒤에 아무 글자)</span>
+      <code>re:\\bMPCs?\\b</code><span><b>re:</b>로 시작하면 정규식 그대로 (고급)</span>
+    </div>
+    <div class="row" style="margin-top:14px"><span style="font-size:13px;color:var(--sub)">최소 점수</span>
+      <input class="inp" style="flex:none;width:70px;min-width:0" type="number" min="1" value="${esc(draft.min_score)}" id="minscore">
+      <span class="hint" style="margin:0">1 = abstract에 한 번만 나와도 수집 · 2 이상 = 잡음 감소, 놓치는 논문 증가</span></div>
+  </div>
+
+  <div class="panel">
+    <h3>저장</h3>
+    ${!repoOk ? '<p class="desc">로컬 미리보기라 저장소 정보가 없습니다. GitHub Pages에서 열면 저장할 수 있어요.</p>' : ''}
+    <div class="row" style="justify-content:space-between">
+      <span class="dirty" id="dirty"></span>
+      <span class="row">
+        <button class="btn" id="copy">설정 JSON 복사</button>
+        <button class="btn primary" id="save" ${repoOk && token ? '' : 'disabled'}>GitHub에 저장</button>
+      </span>
+    </div>
+    <div class="msg" id="msg"></div>
+    <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line)">
+      ${token
+        ? `<div class="row" style="justify-content:space-between"><span style="font-size:13px;color:var(--ok)">● 이 브라우저는 GitHub에 연결됨</span><button class="btn small" id="unlink">연결 해제</button></div>`
+        : `<div class="row"><input class="inp" type="password" id="token" placeholder="GitHub 토큰 (github_pat_...)" autocomplete="off" style="font-weight:400"><button class="btn" id="link">연결</button></div>
+           <details class="howto"><summary>토큰 만드는 법 (처음 한 번, 3분)</summary><ol>
+             <li><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → Fine-grained token 만들기</a> 열기</li>
+             <li>Token name: <code>nber-radar</code> · Expiration: 1년(366 days) 정도</li>
+             <li>Repository access: <b>Only select repositories</b> → <code>${esc((D.repo||'').split('/')[1] || 'nber-radar')}</code></li>
+             <li>Permissions → Repository permissions → <b>Contents: Read and write</b> (나머지는 그대로)</li>
+             <li>Generate token → 나온 값을 위 칸에 붙여넣고 <b>연결</b></li></ol>
+             토큰은 이 브라우저에만 저장되고, 이 저장소의 파일 쓰기 외에는 아무 권한이 없습니다. 다른 기기에서는 다시 연결해야 합니다.</details>`}
+      ${repoOk ? `<div class="hint">토큰 없이 하려면: <b>설정 JSON 복사</b> → <a href="https://github.com/${esc(D.repo)}/edit/HEAD/config.json" target="_blank" rel="noopener">GitHub에서 config.json 편집</a> → 전체 붙여넣기 → Commit</div>` : ''}
+    </div>
+  </div>`;
+  bindSettings();
+  updateDirty();
+}
+function updateDirty(){
+  const el = document.getElementById('dirty');
+  if (el) el.textContent = isDirty() ? '● 저장하지 않은 변경 있음' : '';
+}
+function msg(text, kind){ const el = document.getElementById('msg'); el.className = 'msg ' + (kind||''); el.innerHTML = text; }
+function bindSettings(){
+  const V = document.getElementById('view-settings');
+  V.querySelectorAll('[data-k]').forEach(el => el.addEventListener('input', () => {
+    const f = draft.fields[+el.dataset.i], k = el.dataset.k;
+    if (k === 'keywords') f.keywords = el.value.split('\n');
+    else f[k] = el.value;
+    if (k === 'color') el.closest('.fe').style.setProperty('--c', el.value);
+    updateDirty();
+  }));
+  V.querySelectorAll('[data-act]').forEach(b => b.onclick = () => {
+    const i = +b.dataset.i, f = draft.fields[i];
+    if (b.dataset.act === 'archive') f.active = false;
+    if (b.dataset.act === 'restore') f.active = true;
+    if (b.dataset.act === 'delete') draft.fields.splice(i, 1);
+    renderSettings();
+  });
+  document.getElementById('add').onclick = () => {
+    const used = draft.fields.map(f => f.color.toLowerCase());
+    draft.fields.push({name: '', color: PALETTE.find(c => !used.includes(c.toLowerCase())) || PALETTE[0], keywords: [], active: true});
+    renderSettings();
+    const ins = document.querySelectorAll('#view-settings .inp[data-k=name]');
+    ins[ins.length - 1]?.focus();
+  };
+  document.getElementById('minscore').oninput = e => { draft.min_score = e.target.value; updateDirty(); };
+  document.getElementById('copy').onclick = async () => {
+    const err = validate(); if (err) return msg(err, 'err');
+    const text = JSON.stringify(cleanCfg(draft), null, 2);
+    try { await navigator.clipboard.writeText(text); msg('복사했습니다. GitHub의 config.json 내용을 전부 지우고 붙여넣은 뒤 Commit 하세요.', 'ok'); }
+    catch (e) { msg('<textarea rows="8" readonly>' + esc(text) + '</textarea>자동 복사가 막혀 있어요. 위 내용을 직접 복사하세요.'); }
+  };
+  const link = document.getElementById('link');
+  if (link) link.onclick = () => {
+    const v = document.getElementById('token').value.trim();
+    if (!/^(github_pat_|ghp_)/.test(v)) return msg('토큰 형식이 아닙니다 (github_pat_ 로 시작).', 'err');
+    LS.set(TOKEN_KEY, v); renderSettings(); msg('연결했습니다. 이제 GitHub에 저장할 수 있어요.', 'ok');
+  };
+  const unlink = document.getElementById('unlink');
+  if (unlink) unlink.onclick = () => { LS.del(TOKEN_KEY); renderSettings(); };
+  document.getElementById('save').onclick = save;
+}
+function b64(str){ const bytes = new TextEncoder().encode(str); let s = ''; bytes.forEach(b => s += String.fromCharCode(b)); return btoa(s); }
+function apiErr(status){
+  return ({401: '토큰이 잘못됐거나 만료됐습니다. 연결 해제 후 새 토큰을 넣으세요.',
+           403: '토큰 권한이 부족합니다. 이 저장소에 Contents: Read and write 권한을 줬는지 확인하세요.',
+           404: '저장소를 찾을 수 없습니다. 토큰의 Repository access에 이 저장소가 포함됐는지 확인하세요.',
+           409: '그사이 config.json이 바뀌었습니다. 새로고침 후 다시 저장하세요.',
+           422: 'GitHub가 요청을 거절했습니다. 새로고침 후 다시 시도하세요.'})[status] || `GitHub 오류 (${status})`;
+}
+async function save(){
+  const err = validate(); if (err) return msg(err, 'err');
+  if (!isDirty()) return msg('바뀐 내용이 없습니다.');
+  const token = LS.get(TOKEN_KEY);
+  const api = `https://api.github.com/repos/${D.repo}/contents/config.json`;
+  const h = {Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'};
+  const btn = document.getElementById('save'); btn.disabled = true; msg('저장 중…');
+  try {
+    let sha;
+    const g = await fetch(api, {headers: h, cache: 'no-store'});
+    if (g.ok) sha = (await g.json()).sha; else if (g.status !== 404) throw g.status;
+    const next = cleanCfg(draft);
+    const r = await fetch(api, {method: 'PUT', headers: h, body: JSON.stringify({
+      message: 'settings: update interest fields', content: b64(JSON.stringify(next, null, 2) + '\n'), sha})});
+    if (!r.ok) throw r.status;
+    saved = next; draft = JSON.parse(JSON.stringify(next));
+    renderSettings(); renderPapers();
+    msg(`저장했습니다. 수집이 자동으로 시작돼요 — <b>2~3분 뒤 새로고침</b>하면 반영됩니다.
+         (<a href="https://github.com/${esc(D.repo)}/actions" target="_blank" rel="noopener">진행 상황 보기</a>)`, 'ok');
+  } catch (s) {
+    msg(typeof s === 'number' ? apiErr(s) : '네트워크 오류로 저장하지 못했습니다.', 'err');
+    btn.disabled = false;
+  }
+}
+
+/* ── 탭 전환 ─────────────────────────────────────────── */
+function route(){
+  const s = location.hash === '#settings';
+  document.getElementById('view-papers').hidden = s;
+  document.getElementById('view-settings').hidden = !s;
+  document.getElementById('tab-papers').classList.toggle('on', !s);
+  document.getElementById('tab-settings').classList.toggle('on', s);
+  if (s) renderSettings(); else renderPapers();
+}
+window.addEventListener('hashchange', route);
+window.addEventListener('beforeunload', e => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
+route();
 </script></body></html>"""
 
 
 def build_site(store):
-    order = list(FIELDS)
-    papers = sorted(store.values(),
-                    key=lambda p: (p["added"], -order.index(p["field"]) if p["field"] in order else 0, p["score"]),
-                    reverse=True)
-    papers = [p for p in papers if p.get("field") in FIELDS]   # 설정에서 지운 분야는 숨김
+    papers = sorted(store.values(), key=lambda p: (p["added"], p.get("score", 0)), reverse=True)
     data = {
         "updated": datetime.now(KST).strftime("%Y-%m-%d %H:%M KST"),
         "latest": max((p["added"] for p in papers), default=""),
-        "fields": {f: c["color"] for f, c in FIELDS.items()},
+        "repo": os.environ.get("GITHUB_REPOSITORY", ""),
+        "config": CONFIG,
         "papers": papers,
     }
     blob = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
-    page = SITE_TEMPLATE.replace("__DATA__", blob).replace("__MINCITED__", str(SETTINGS["min_cited"]))
+    icon_inline = ICON_SVG.replace('id="g"', 'id="hg"').replace("url(#g)", "url(#hg)") \
+                          .replace('id="s"', 'id="hs"').replace("url(#s)", "url(#hs)")
+    page = (SITE_TEMPLATE.replace("__DATA__", blob)
+                         .replace("__ICON__", icon_inline)
+                         .replace("__MINCITED__", str(SETTINGS["min_cited"])))
     out = Path(SETTINGS["site_dir"])
     out.mkdir(parents=True, exist_ok=True)
     (out / "index.html").write_text(page, encoding="utf-8")
-    (out / ".nojekyll").write_text("")
+    (out / "favicon.svg").write_text(ICON_SVG, encoding="utf-8")
+    (out / "favicon-32.png").write_bytes(base64.b64decode(ICON_PNG32))
+    (out / "apple-touch-icon.png").write_bytes(base64.b64decode(ICON_PNG180))
     return out / "index.html"
 
 
@@ -736,7 +1050,7 @@ def site_url():
 
 
 # ════════════════════════════════════════════════════════════════════
-# [9] STATE — data/seen.json (검사한 논문), data/papers.json (누적 논문)
+# [9] STATE — data/papers.json (누적 논문)
 # ════════════════════════════════════════════════════════════════════
 
 def _load_json(path):
@@ -755,10 +1069,6 @@ def _save_json(path, obj):
     p.write_text(json.dumps(obj, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
 
 
-def _cutoff(days):
-    return (datetime.now(KST) - timedelta(days=days)).date().isoformat()
-
-
 KEEP_KEYS = ["id", "title", "authors", "abstract", "url", "pdf", "field", "score", "scores", "hits",
              "cited_refs", "related", "related_kind"]
 
@@ -773,18 +1083,24 @@ def main():
                     help="메일은 preview.html로 저장하고 data/는 갱신하지 않음 (site/는 생성)")
     args = ap.parse_args()
 
+    load_config()
+    print("fields:", ", ".join(FIELDS) or "(none)", "| min_score:", CONFIG["min_score"])
     now = datetime.now(KST)
     stamp = now.date().isoformat()
-    seen_path = Path(SETTINGS["data_dir"]) / "seen.json"
     store_path = Path(SETTINGS["data_dir"]) / "papers.json"
-    seen, store = _load_json(seen_path), _load_json(store_path)
+    store = _load_json(store_path)
 
+    # 이미 모은 논문만 건너뛰고 RSS 전체를 매번 다시 분류한다.
+    # → 설정에서 분야를 새로 넣으면 이번 주 발행분 중 해당 논문이 바로 들어온다.
     feed = fetch_nber_feed()
-    print(f"RSS: {len(feed)} papers")
-    new = [p for p in feed if p["id"] not in seen]
-    matched = [classify(p) for p in new]
-    matched = [p for p in matched if p["score"] >= SETTINGS["min_score"]]
-    print(f"new: {len(new)} / matched: {len(matched)}")
+    matched = []
+    for p in feed:
+        if p["id"] in store:
+            continue
+        classify(p)
+        if p["score"] >= CONFIG["min_score"]:
+            matched.append(p)
+    print(f"RSS: {len(feed)} papers / new matches: {len(matched)}")
 
     for p in matched:
         print(f"  enrich {p['id']} [{p['field']}] {p['title'][:60]}")
@@ -792,7 +1108,7 @@ def main():
         time.sleep(0.3)
         store[p["id"]] = {**{k: p.get(k) for k in KEEP_KEYS}, "added": stamp}
 
-    keep = _cutoff(SETTINGS["store_keep_days"])
+    keep = (now - timedelta(days=SETTINGS["store_keep_days"])).date().isoformat()
     store = {k: v for k, v in store.items() if v.get("added", stamp) >= keep}
     print("site:", build_site(store))
 
@@ -813,12 +1129,8 @@ def main():
     elif not mail_ready:
         print("email skipped (GMAIL secrets not set — 웹사이트만 갱신)")
     else:
-        print("no matched papers — email skipped")
+        print("no new matches — email skipped")
 
-    for p in new:
-        seen[p["id"]] = stamp
-    seen = {k: v for k, v in seen.items() if v >= _cutoff(SETTINGS["seen_keep_days"])}
-    _save_json(seen_path, seen)
     _save_json(store_path, store)
 
 
