@@ -1,0 +1,22 @@
+{
+ "added": 126,
+ "fields": [
+  "Household Debt",
+  "Housing Market",
+  "Corporate / Commercial Debt",
+  "External Debt",
+  "Heterogeneous Agent Models"
+ ],
+ "finished": "2026-11-18",
+ "from": "2026-05-17",
+ "listed": 913,
+ "matched": 126,
+ "message": "",
+ "remaining": 0,
+ "request": "2026-11-17T12:12:38.398Z",
+ "short_abstracts": 0,
+ "source": "nber",
+ "started": "2026-11-18",
+ "state": "done",
+ "updated": "2026-11-18 07:42 KST"
+}
