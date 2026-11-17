@@ -10,6 +10,8 @@ NBER 신규 working paper를 관심분야로 걸러 웹사이트(GitHub Pages)�
     .github/workflows/nber_digest.yml    ← 매일 실행 + 웹사이트 배포
     config.json                          ← 관심분야 설정 (웹사이트 설정 탭에서 편집, 없으면 자동 생성)
     data/papers.json                     ← 자동 생성 (누적 논문)
+    backfill.json                        ← 과거 논문 불러오기 요청 (설정 탭이 씀)
+    data/backfill_status.json            ← 자동 생성 (불러오기 진행 상황)
     site/index.html                      ← 자동 생성 (배포되는 웹페이지, 저장소엔 안 올라감)
 
 설치 요약 (GitHub Free는 저장소가 Public이어야 Pages 사용 가능):
@@ -96,7 +98,10 @@ SETTINGS = {
     "send_when_empty": False,       # 새 관심논문이 없는 날도 메일 보낼지
     "data_dir": "data",             # papers.json(누적 논문) 저장 폴더
     "site_dir": "site",             # 웹사이트 출력 폴더 (GitHub Pages가 이 폴더를 배포)
-    "store_keep_days": 730,         # 웹사이트에 남겨둘 기간 (2년)
+    "store_keep_days": 730,         # 웹사이트에 남겨둘 기간 (수집일 기준 2년)
+    "backfill_file": "backfill.json",   # 과거 논문 불러오기 요청 (웹사이트 설정 탭이 씀)
+    "backfill_minutes": 40,         # 한 번 실행에서 과거 불러오기에 쓸 최대 시간 (남으면 다음 실행에 이어서)
+    "backfill_earliest": "2000-01-01",
     "subject_prefix": "[NBER Digest]",
     "http_timeout": 25,
     "user_agent": "nber-digest/1.0 (personal literature alert)",
@@ -777,9 +782,11 @@ let draft = JSON.parse(JSON.stringify(D.config));       // 설정 탭에서 편�
 let active = 'ALL', query = '';
 
 const colorOf = n => (saved.fields.find(f => f.name === n) || {}).color || '#8C7B6B';
-const latestN = PAPERS.filter(p => p.added === D.latest).length;
+const latestN = PAPERS.filter(p => p.added === D.latest && !p.backfill).length;
+const backN = PAPERS.filter(p => p.backfill).length;
 document.getElementById('sub').textContent =
-  `마지막 업데이트 ${D.updated} · 누적 ${PAPERS.length}편` + (D.latest ? ` · 최근 발행분(${D.latest}) ${latestN}편` : '');
+  `마지막 업데이트 ${D.updated} · 누적 ${PAPERS.length}편` + (backN ? ` (과거 불러오기 ${backN}편 포함)` : '')
+  + (D.latest ? ` · 최근 발행분(${D.latest}) ${latestN}편` : '');
 
 /* ── 논문 탭 ─────────────────────────────────────────── */
 function fieldGroups(){
@@ -818,7 +825,7 @@ function card(p, openRefs){
   if (!refs) refs = '<div class="lab">자동 검색 결과 없음</div>';
   const n = (p.cited_refs?.length||0) + (p.related?.length||0);
   return `<article class="card" style="--c:${c}">
-    <div class="meta"><span class="field">${esc(p.field)}</span><span>NBER ${esc(p.id.toUpperCase())}</span>
+    <div class="meta"><span class="field">${esc(p.field)}</span><span>NBER ${esc(p.id.toUpperCase())}</span>${p.backfill && p.date ? `<span>${esc(p.date)}</span>` : ''}
       <a href="${esc(p.url)}" target="_blank" rel="noopener">page</a><a href="${esc(p.pdf)}" target="_blank" rel="noopener">PDF</a></div>
     <a class="title" href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
     <div class="authors">${esc(p.authors)}</div>
@@ -829,17 +836,23 @@ function card(p, openRefs){
       <a href="https://www.semanticscholar.org/search?q=${encodeURIComponent(p.title)}" target="_blank" rel="noopener">Semantic Scholar</a></div></details>
   </article>`;
 }
+// 매일 수집분은 수집일로, 과거 불러오기분은 발행 월로 묶는다
+const fmtMonth = k => `${k.slice(0,4)}년 ${+k.slice(5,7)}월`;
+const gkey = p => p.backfill ? ((p.date || '').slice(0,7) || '0000-00') : p.added;
+const glabel = k => /^\d{4}-\d{2}$/.test(k)
+  ? (k === '0000-00' ? '과거 불러오기 · 날짜 미상' : `${fmtMonth(k)} 발행 · 과거 불러오기`)
+  : k + (k === D.latest ? ' · 최신' : '');
 function renderPapers(){
   chips();
   const q = query.trim().toLowerCase();
   const list = PAPERS.filter(p => (active==='ALL' || p.field===active) &&
     (!q || [p.title,p.authors,p.abstract,...Object.values(p.hits||{}).flat()].join(' ').toLowerCase().includes(q)));
   const days = {};
-  list.forEach(p => (days[p.added] ||= []).push(p));
+  list.forEach(p => (days[gkey(p)] ||= []).push(p));
   const keys = Object.keys(days).sort().reverse();
   const isArch = fieldGroups().arch.includes(active);
   document.getElementById('list').innerHTML = (keys.length ? keys.map(d =>
-    `<div class="day"><h2>${d}${d===D.latest?' · 최신':''}</h2><span>${days[d].length}편</span></div>` +
+    `<div class="day"><h2>${glabel(d)}</h2><span>${days[d].length}편</span></div>` +
     days[d].map(p => card(p, d===D.latest && !isArch)).join('')).join('')
     : `<div class="empty">${active!=='ALL' && !COUNTS[active] ? '아직 이 분야로 받은 논문이 없습니다. 다음 NBER 발행분부터 모입니다.' : '조건에 맞는 논문이 없습니다.'}</div>`);
   document.querySelectorAll('.abs').forEach(el => el.onclick = () => el.classList.toggle('open'));
@@ -898,6 +911,21 @@ function renderSettings(){
         <span class="row"><button class="btn small" data-act="restore" data-i="${i}">다시 관심분야로</button>${COUNTS[f.name] ? '' : `<button class="btn small" data-act="delete" data-i="${i}">완전 삭제</button>`}</span></div>`).join('')
       + orphan.map(n => `<div class="arch-item"><span><span class="dot" style="background:#8C7B6B"></span>${esc(n)} <span class="cnt">· 논문 ${COUNTS[n]}편 (설정 파일에 없음)</span></span></div>`).join('')
       : '<p class="desc" style="margin:0">아직 없습니다.</p>'}
+  </div>
+
+  <div class="panel" id="bfpanel">
+    <h3>과거 논문 불러오기</h3>
+    <p class="desc">고른 날짜부터 지금까지 나온 NBER working paper 중 <b>아직 없는 것</b>을 지금 저장된 관심분야로 걸러 추가합니다.
+    첫 페이지에서는 <b>발행 월</b>별로 묶여 보입니다. 메일은 보내지 않습니다.</p>
+    <div class="row">
+      <input class="inp" type="date" id="bfdate" min="2000-01-01" max="${TODAY}" value="${esc(bfDefault())}" style="flex:none;width:170px;font-weight:400">
+      <button class="btn small" data-bf="3">3개월</button><button class="btn small" data-bf="6">6개월</button>
+      <button class="btn small" data-bf="12">1년</button><button class="btn small" data-bf="24">2년</button>
+      <button class="btn primary" id="bfgo" ${repoOk && token ? '' : 'disabled'}>불러오기 요청</button>
+    </div>
+    <div class="hint" id="bfest"></div>
+    ${repoOk && !token ? '<div class="hint">요청하려면 아래 <b>저장</b> 칸에서 GitHub에 먼저 연결하세요.</div>' : ''}
+    <div class="msg" id="bfmsg">${bfStatusHtml()}</div>
   </div>
 
   <div class="panel">
@@ -985,6 +1013,65 @@ function bindSettings(){
   const unlink = document.getElementById('unlink');
   if (unlink) unlink.onclick = () => { LS.del(TOKEN_KEY); renderSettings(); };
   document.getElementById('save').onclick = save;
+  const bd = document.getElementById('bfdate'), be = document.getElementById('bfest');
+  const est = () => be.textContent = bfEstimate(bd.value);
+  bd.oninput = est; est();
+  V.querySelectorAll('[data-bf]').forEach(b => b.onclick = () => { bd.value = monthsAgo(+b.dataset.bf); est(); });
+  document.getElementById('bfgo').onclick = requestBackfill;
+}
+const TODAY = new Date(Date.now() + 9*3600e3).toISOString().slice(0,10);   // 한국 날짜
+const BF = D.backfill || {request: null, status: {}};
+function monthsAgo(n){ const d = new Date(TODAY); d.setMonth(d.getMonth() - n); return d.toISOString().slice(0,10); }
+function bfDefault(){ return (BF.request && BF.request.from) || monthsAgo(6); }
+function bfEstimate(v){
+  if (!v) return '';
+  const months = Math.max(0.25, (new Date(TODAY) - new Date(v)) / (30.4 * 864e5));
+  const total = Math.round(months * 150), hit = Math.round(total * 0.2);
+  const mins = Math.round(2 + hit * 1.8 / 60);
+  return `NBER 약 ${total.toLocaleString()}편 확인 → 관심분야 ${hit.toLocaleString()}편 안팎 예상 · 약 ${mins}분`
+    + (mins > 40 ? ' (40분이 넘으면 다음 날 아침 실행에서 이어서 불러옵니다)' : '');
+}
+function bfStatusHtml(){
+  const r = BF.request, s = BF.status || {};
+  if (!r) return '<span style="color:var(--mute)">아직 요청한 적이 없습니다.</span>';
+  if (s.request !== r.requested_at)
+    return `⏳ <b>${esc(r.from)}</b>부터 불러오기 요청됨 — 처리 대기 중입니다. 몇 분 뒤 새로고침하세요.`;
+  if (s.state === 'running')
+    return `⏳ <b>${esc(s.from)}</b>부터 진행 중 — 관심분야 ${s.matched ?? '?'}편 중 ${s.added}편 추가, ${s.remaining ?? '?'}편 남음.<br><span style="color:var(--mute)">${esc(s.message || '')}</span>`;
+  if (s.state === 'error')
+    return `<span style="color:var(--err)">⚠ ${esc(s.message || '불러오기 실패')}</span>`;
+  return `<span style="color:var(--ok)">✓ <b>${esc(s.from)}</b>부터 불러오기 완료 (${esc(s.finished || '')})</span> — NBER ${(s.listed||0).toLocaleString()}편 확인, 관심분야 <b>${s.added}편</b> 추가.`
+    + (s.short_abstracts ? `<br><span style="color:var(--mute)">${s.short_abstracts}편은 전체 abstract를 구하지 못해 앞부분으로만 분류했습니다.</span>` : '')
+    + `<br><span style="color:var(--mute)">당시 기준 분야: ${esc((s.fields || []).join(', '))}</span>`;
+}
+async function putFile(path, text, message){
+  const token = LS.get(TOKEN_KEY);
+  const api = `https://api.github.com/repos/${D.repo}/contents/${path}`;
+  const h = {Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'};
+  let sha;
+  const g = await fetch(api, {headers: h, cache: 'no-store'});
+  if (g.ok) sha = (await g.json()).sha; else if (g.status !== 404) throw g.status;
+  const r = await fetch(api, {method: 'PUT', headers: h, body: JSON.stringify({message, content: b64(text), sha})});
+  if (!r.ok) throw r.status;
+}
+async function requestBackfill(){
+  const out = document.getElementById('bfmsg');
+  const say = (t, k) => { out.className = 'msg ' + (k || ''); out.innerHTML = t; };
+  const v = document.getElementById('bfdate').value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return say('날짜를 고르세요.', 'err');
+  if (v < '2000-01-01' || v > TODAY) return say('2000-01-01부터 오늘 사이의 날짜를 고르세요.', 'err');
+  if (isDirty()) return say('관심분야에 저장하지 않은 변경이 있습니다. 불러오기는 <b>저장된</b> 분야 기준이라, 먼저 저장하세요.', 'err');
+  const btn = document.getElementById('bfgo'); btn.disabled = true; say('요청 중…');
+  try {
+    const req = {from: v, requested_at: new Date().toISOString()};
+    await putFile('backfill.json', JSON.stringify(req, null, 2) + '\n', `backfill: from ${v}`);
+    BF.request = req;
+    say(`요청했습니다. 수집이 자동으로 시작돼요 — ${esc(bfEstimate(v).split('· ')[1] || '')} 뒤 새로고침하세요.
+      (<a href="https://github.com/${esc(D.repo)}/actions" target="_blank" rel="noopener">진행 상황 보기</a>)`, 'ok');
+  } catch (s) {
+    say(typeof s === 'number' ? apiErr(s) : '네트워크 오류로 요청하지 못했습니다.', 'err');
+  }
+  btn.disabled = false;
 }
 function b64(str){ const bytes = new TextEncoder().encode(str); let s = ''; bytes.forEach(b => s += String.fromCharCode(b)); return btoa(s); }
 function apiErr(status){
@@ -997,18 +1084,10 @@ function apiErr(status){
 async function save(){
   const err = validate(); if (err) return msg(err, 'err');
   if (!isDirty()) return msg('바뀐 내용이 없습니다.');
-  const token = LS.get(TOKEN_KEY);
-  const api = `https://api.github.com/repos/${D.repo}/contents/config.json`;
-  const h = {Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'};
   const btn = document.getElementById('save'); btn.disabled = true; msg('저장 중…');
   try {
-    let sha;
-    const g = await fetch(api, {headers: h, cache: 'no-store'});
-    if (g.ok) sha = (await g.json()).sha; else if (g.status !== 404) throw g.status;
     const next = cleanCfg(draft);
-    const r = await fetch(api, {method: 'PUT', headers: h, body: JSON.stringify({
-      message: 'settings: update interest fields', content: b64(JSON.stringify(next, null, 2) + '\n'), sha})});
-    if (!r.ok) throw r.status;
+    await putFile('config.json', JSON.stringify(next, null, 2) + '\n', 'settings: update interest fields');
     saved = next; draft = JSON.parse(JSON.stringify(next));
     renderSettings(); renderPapers();
     msg(`저장했습니다. 수집이 자동으로 시작돼요 — <b>2~3분 뒤 새로고침</b>하면 반영됩니다.
@@ -1038,7 +1117,8 @@ def build_site(store):
     papers = sorted(store.values(), key=lambda p: (p["added"], p.get("score", 0)), reverse=True)
     data = {
         "updated": datetime.now(KST).strftime("%Y-%m-%d %H:%M KST"),
-        "latest": max((p["added"] for p in papers), default=""),
+        "latest": max((p["added"] for p in papers if not p.get("backfill")), default=""),
+        "backfill": {"request": BACKFILL.get("request"), "status": BACKFILL.get("status") or {}},
         "repo": os.environ.get("GITHUB_REPOSITORY", ""),
         "config": CONFIG,
         "papers": papers,
@@ -1079,7 +1159,196 @@ def site_url():
 
 
 # ════════════════════════════════════════════════════════════════════
-# [9] STATE — data/papers.json (누적 논문)
+# [9] BACKFILL — 과거 특정 날짜부터 지금까지의 working paper 불러오기
+# ════════════════════════════════════════════════════════════════════
+# 요청: backfill.json  {"from": "2025-06-01", "requested_at": "..."}   ← 웹사이트 설정 탭이 씀
+# 상태: data/backfill_status.json                                       ← 이 스크립트가 씀
+# 흐름: 목록(NBER API, 실패 시 OpenAlex) → 이미 있는 논문 제외 → 전체 abstract 보강
+#       → 현재 활성 분야로 분류 → 시작 월의 논문만 정확한 발행일 확인 → related 검색 → 저장
+# 시간 제한(backfill_minutes)에 걸리면 저장하고 멈추며, 다음 실행(매일 아침 또는 수동)에서 이어간다.
+
+NBER_LIST_API = "https://www.nber.org/api/v1/working_page_listing/contentType/working_paper/_/_/search"
+OPENALEX_NBER_SOURCE = "S2809516038"
+MONTHS = {m: i for i, m in enumerate(
+    ["January", "February", "March", "April", "May", "June", "July", "August",
+     "September", "October", "November", "December"], 1)}
+
+
+def _month_of(display):
+    m = re.match(r"\s*([A-Za-z]+)\s+(\d{4})", display or "")
+    if m and m.group(1).capitalize() in MONTHS:
+        return f"{m.group(2)}-{MONTHS[m.group(1).capitalize()]:02d}"
+    return ""
+
+
+def _paper(pid, title, authors, abstract, month, full):
+    return {"id": pid, "title": title, "authors": authors, "abstract": abstract, "month": month,
+            "abstract_full": full, "url": f"https://www.nber.org/papers/{pid}",
+            "pdf": f"https://www.nber.org/system/files/working_papers/{pid}/{pid}.pdf",
+            "doi": f"10.3386/{pid}"}
+
+
+def list_nber_since(start):
+    """NBER 목록 API (최신순, 100편씩). abstract는 앞부분만 온다. 실패하면 None."""
+    start_month, out = start[:7], []
+    for page in range(1, 500):
+        q = urllib.parse.urlencode({"page": page, "perPage": 100, "sortBy": "public_date"})
+        data = http_json(f"{NBER_LIST_API}?{q}")
+        results = (data or {}).get("results") or []
+        if not results:
+            return out if page > 1 else None
+        older = 0
+        for r in results:
+            m = re.search(r"/papers/(w\d+)", r.get("url") or "")
+            month = _month_of(r.get("displaydate"))
+            if not m:
+                continue
+            if month and month < start_month:
+                older += 1
+                continue
+            authors = ", ".join(clean_text(a) for a in (r.get("authors") or []))
+            out.append(_paper(m.group(1), clean_text(r.get("title")), authors,
+                              clean_text(r.get("abstract")), month, False))
+        if older == len(results):          # 페이지 전체가 시작 월보다 이전 → 끝
+            break
+        time.sleep(0.3)
+    return out
+
+
+def _deinvert(inv):
+    pos = sorted((i, w) for w, idxs in (inv or {}).items() for i in idxs)
+    return " ".join(w for _, w in pos)
+
+
+def list_openalex_since(start):
+    """예비 경로: OpenAlex의 NBER working paper 목록 (abstract 포함, 최근 2~3주는 빠질 수 있음)."""
+    out, cursor = [], "*"
+    while cursor:
+        data = _openalex("works", {
+            "filter": f"primary_location.source.id:{OPENALEX_NBER_SOURCE},from_publication_date:{start[:7]}-01",
+            "per_page": 200, "cursor": cursor,
+            "select": "doi,title,authorships,publication_date,abstract_inverted_index"})
+        if not data:
+            return out or None
+        for w in data.get("results", []):
+            m = re.search(r"10\.3386/(w\d+)$", w.get("doi") or "")
+            if not m:
+                continue
+            authors = ", ".join((a.get("author") or {}).get("display_name", "") for a in w.get("authorships", []))
+            abstract = clean_text(_deinvert(w.get("abstract_inverted_index")))
+            out.append(_paper(m.group(1), clean_text(w.get("title")), authors, abstract,
+                              (w.get("publication_date") or "")[:7], bool(abstract)))
+        cursor = (data.get("meta") or {}).get("next_cursor") if data.get("results") else None
+        time.sleep(0.2)
+    return out
+
+
+def fill_abstracts(papers):
+    """앞부분만 있는 abstract를 OpenAlex 전체 abstract로 교체 (50편씩)."""
+    need = [p for p in papers if not p["abstract_full"]]
+    for i in range(0, len(need), 50):
+        chunk = need[i:i + 50]
+        data = _openalex("works", {"filter": "doi:" + "|".join(p["doi"] for p in chunk),
+                                   "per_page": 50, "select": "doi,abstract_inverted_index"})
+        found = {}
+        for w in (data or {}).get("results", []):
+            m = re.search(r"(w\d+)$", w.get("doi") or "")
+            text = clean_text(_deinvert(w.get("abstract_inverted_index")))
+            if m and text:
+                found[m.group(1)] = text
+        for p in chunk:
+            if len(found.get(p["id"], "")) >= max(40, len(p["abstract"]) * 0.8):
+                p["abstract"], p["abstract_full"] = found[p["id"]], True
+        time.sleep(0.2)
+
+
+def fetch_nber_page(pid):
+    """NBER 논문 페이지 → (발행일 YYYY-MM-DD, 전체 abstract). 실패 시 (None, None)."""
+    page = http_get(f"https://www.nber.org/papers/{pid}", accept="text/html")
+    if not page:
+        return None, None
+    d = re.search(r'citation_publication_date"\s+content="(\d{4})/(\d{2})/(\d{2})', page)
+    a = re.search(r'<div class="page-header__intro-inner">(.*?)</div>', page, re.S)
+    return (f"{d.group(1)}-{d.group(2)}-{d.group(3)}" if d else None,
+            clean_text(a.group(1)) if a else None)
+
+
+def backfill_request():
+    req = _load_json(SETTINGS["backfill_file"])
+    start = str(req.get("from", ""))
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start):
+        return None
+    today = datetime.now(KST).date().isoformat()
+    start = min(max(start, SETTINGS["backfill_earliest"]), today)
+    return {"from": start, "requested_at": str(req.get("requested_at", start))}
+
+
+def run_backfill(store, req, status, stamp, deadline):
+    """store를 직접 갱신하고 새 status를 돌려준다."""
+    first = status.get("request") != req["requested_at"]
+    status = {"request": req["requested_at"], "from": req["from"], "state": "running",
+              "added": 0 if first else status.get("added", 0), "fields": list(FIELDS),
+              "started": status.get("started") if not first else stamp}
+    print(f"backfill from {req['from']} ({'new request' if first else 'resume'})")
+
+    listing, source = list_nber_since(req["from"]), "nber"
+    if listing is None:
+        listing, source = list_openalex_since(req["from"]), "openalex"
+    if listing is None:
+        status.update(state="error", message="NBER·OpenAlex 목록을 모두 가져오지 못했습니다. 다음 실행에서 다시 시도합니다.")
+        return status
+    status.update(source=source, listed=len(listing))
+    cand = [p for p in listing if p["id"] not in store]
+    print(f"  listed {len(listing)} via {source}, not yet collected {len(cand)}")
+
+    fill_abstracts(cand)                         # 실측: 6개월치 913편 중 89%를 OpenAlex가 채움
+    for p in [p for p in cand if not p["abstract_full"]][:400]:
+        d, a = fetch_nber_page(p["id"])          # 나머지는 NBER 논문 페이지에서
+        if a and len(a) > len(p["abstract"]):
+            p["abstract"], p["abstract_full"] = a, True
+        if d:
+            p["date"] = d
+        time.sleep(0.2)
+
+    matched = []
+    for p in cand:
+        classify(p)
+        if p["score"] < CONFIG["min_score"]:
+            continue
+        if p["month"] == req["from"][:7] and not p.get("date"):
+            p["date"] = fetch_nber_page(p["id"])[0]   # 시작 월만 정확한 날짜 확인
+            time.sleep(0.2)
+        p.setdefault("date", None)
+        p["date"] = p["date"] or p["month"]
+        if p["date"] and p["date"] < req["from"][:len(p["date"])]:
+            continue
+        matched.append(p)
+    status.update(matched=len(matched), short_abstracts=sum(not p["abstract_full"] for p in matched))
+    print(f"  matched {len(matched)}")
+
+    done = 0
+    for p in matched:
+        if time.time() > deadline:
+            break
+        if len(p["date"] or "") < 10:           # 월만 알면 페이지에서 정확한 발행일 확인
+            p["date"] = fetch_nber_page(p["id"])[0] or p["date"]
+        enrich(p)
+        p["backfill"] = True
+        store[p["id"]] = {**{k: p.get(k) for k in KEEP_KEYS}, "added": stamp}
+        done += 1
+        time.sleep(0.2)
+    status["added"] += done
+    status["remaining"] = len(matched) - done
+    if status["remaining"]:
+        status["message"] = "시간 제한으로 멈췄습니다. 다음 실행(매일 아침 또는 수동 실행)에서 이어서 불러옵니다."
+    else:
+        status.update(state="done", finished=stamp, message="")
+    print(f"  added {done}, remaining {status['remaining']}")
+    return status
+
+
+# ════════════════════════════════════════════════════════════════════
+# [10] STATE — data/papers.json (누적 논문), data/backfill_status.json
 # ════════════════════════════════════════════════════════════════════
 
 def _load_json(path):
@@ -1098,12 +1367,14 @@ def _save_json(path, obj):
     p.write_text(json.dumps(obj, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
 
 
+BACKFILL = {}   # 사이트에 보여줄 과거 불러오기 요청/상태
+
 KEEP_KEYS = ["id", "title", "authors", "abstract", "url", "pdf", "field", "score", "scores", "hits",
-             "cited_refs", "related", "related_kind"]
+             "cited_refs", "related", "related_kind", "date", "backfill"]
 
 
 # ════════════════════════════════════════════════════════════════════
-# [10] MAIN
+# [11] MAIN
 # ════════════════════════════════════════════════════════════════════
 
 def main():
@@ -1135,7 +1406,19 @@ def main():
         print(f"  enrich {p['id']} [{p['field']}] {p['title'][:60]}")
         enrich(p)
         time.sleep(0.3)
+        p["date"] = stamp
         store[p["id"]] = {**{k: p.get(k) for k in KEEP_KEYS}, "added": stamp}
+
+    # 과거 불러오기: 새 요청이 있거나 지난번에 다 못 끝냈으면 실행
+    status_path = Path(SETTINGS["data_dir"]) / "backfill_status.json"
+    bstatus = _load_json(status_path)
+    req = backfill_request()
+    if req and (bstatus.get("request") != req["requested_at"] or bstatus.get("state") == "running"
+                or bstatus.get("state") == "error"):
+        deadline = time.time() + SETTINGS["backfill_minutes"] * 60
+        bstatus = run_backfill(store, req, bstatus, stamp, deadline)
+        bstatus["updated"] = now.strftime("%Y-%m-%d %H:%M KST")
+    BACKFILL.update(request=req, status=bstatus)
 
     keep = (now - timedelta(days=SETTINGS["store_keep_days"])).date().isoformat()
     store = {k: v for k, v in store.items() if v.get("added", stamp) >= keep}
@@ -1161,6 +1444,8 @@ def main():
         print("no new matches — email skipped")
 
     _save_json(store_path, store)
+    if bstatus:
+        _save_json(status_path, bstatus)
 
 
 if __name__ == "__main__":
